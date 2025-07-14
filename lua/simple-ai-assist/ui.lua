@@ -9,7 +9,8 @@ local state = {
   code = "",
   context = nil,
   current_action = nil,
-  response = nil
+  response = nil,
+  original_lines = nil  -- Store original buffer content
 }
 
 local function create_window()
@@ -42,6 +43,11 @@ local function create_window()
 end
 
 local function render_content()
+  -- Only modify the floating window buffer, never the source buffer
+  if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
+    return
+  end
+  
   vim.api.nvim_buf_set_option(state.buf, "modifiable", true)
   local lines = {}
   
@@ -99,7 +105,7 @@ local function setup_keymaps()
         api.request_completion(action.prompt, state.code, function(response, error)
           if error then
             vim.notify("AI request failed: " .. error, vim.log.levels.ERROR)
-            M.close()
+            M.close(false)
             return
           end
           
@@ -125,7 +131,7 @@ local function setup_keymaps()
         )
         
         vim.notify("Changes applied!", vim.log.levels.INFO)
-        M.close()
+        M.close(true)
       end
     end, { buffer = buf })
     
@@ -137,7 +143,7 @@ local function setup_keymaps()
         api.request_completion(state.current_action.prompt, state.code, function(response, error)
           if error then
             vim.notify("AI request failed: " .. error, vim.log.levels.ERROR)
-            M.close()
+            M.close(false)
             return
           end
           
@@ -149,13 +155,13 @@ local function setup_keymaps()
   end
   
   vim.keymap.set("n", config.options.keymaps.cancel, function()
-    M.close()
+    M.close(false)
   end, { buffer = buf })
 end
 
 function M.show_assistant(code, context)
   -- Close any existing window first
-  M.close()
+  M.close(false)
   
   -- Reset state
   state.code = code
@@ -163,13 +169,59 @@ function M.show_assistant(code, context)
   state.current_action = nil
   state.response = nil
   
+  -- Store original buffer content to ensure we don't accidentally modify it
+  if context and context.buffer and vim.api.nvim_buf_is_valid(context.buffer) then
+    state.original_lines = vim.api.nvim_buf_get_lines(
+      context.buffer,
+      context.start_line,
+      context.end_line,
+      false
+    )
+  end
+  
   create_window()
   render_content()
   setup_keymaps()
 end
 
-function M.close()
+function M.close(accepted)
   clear_keymaps()
+  
+  -- If not accepted and we have original lines, restore them to ensure no changes
+  if not accepted and state.original_lines and state.context and 
+     vim.api.nvim_buf_is_valid(state.context.buffer) then
+    -- Check if buffer was modified
+    local current_lines = vim.api.nvim_buf_get_lines(
+      state.context.buffer,
+      state.context.start_line,
+      state.context.end_line,
+      false
+    )
+    
+    -- Only restore if content actually changed
+    local changed = false
+    if #current_lines ~= #state.original_lines then
+      changed = true
+    else
+      for i, line in ipairs(current_lines) do
+        if line ~= state.original_lines[i] then
+          changed = true
+          break
+        end
+      end
+    end
+    
+    if changed then
+      vim.api.nvim_buf_set_lines(
+        state.context.buffer,
+        state.context.start_line,
+        state.context.end_line,
+        false,
+        state.original_lines
+      )
+      vim.notify("Original content restored", vim.log.levels.INFO)
+    end
+  end
   
   if state.win and vim.api.nvim_win_is_valid(state.win) then
     vim.api.nvim_win_close(state.win, true)
@@ -185,6 +237,7 @@ function M.close()
   state.context = nil
   state.current_action = nil
   state.response = nil
+  state.original_lines = nil
 end
 
 return M
