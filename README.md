@@ -1,19 +1,18 @@
-# simple-ai-assist.nvim
+# A Simple AI Assistant for Neovim
 
-A lightweight Neovim plugin that provides inline AI assistance for code editing. Select code and get AI-powered suggestions for explanations, refactoring, fixes, or comments.
+My workflow is to use CLI-based code generation AI assistants. I don't need anything complicated, just select code: explain, refactor, fix or comment. This plugin does just that.
 
 ## Features
 
-- 🚀 Simple integration with any Neovim setup
-- 🤖 Multiple AI provider support (OpenRouter, OpenAI, Anthropic)
-- 🎯 Visual mode code selection
-- 💬 AI-powered code actions:
+- Multiple AI provider support (OpenRouter, OpenAI, Anthropic)
+- Visual mode code selection
+- AI-powered code actions:
   - **Explain**: Get detailed explanations
   - **Refactor**: Improve code structure
   - **Fix**: Identify and fix issues
   - **Comment**: Generate appropriate comments
-- ⌨️ Keyboard-driven workflow
-- 🪟 Non-intrusive floating window UI
+- Keyboard-driven workflow
+- Non-intrusive floating window UI
 
 ## Requirements
 
@@ -70,9 +69,9 @@ require("simple-ai-assist").setup({
   
   -- Keymappings
   keymaps = {
-    trigger = "<leader>ac",  -- Trigger assistant in visual mode
-    accept = "a",           -- Accept AI suggestion
-    retry = "r",            -- Retry same action
+    trigger = "<leader>ac", -- Trigger assistant in visual mode
+    accept = "C-u",         -- Accept (update) AI suggestion
+    retry = "C-r",          -- Retry same action
     cancel = "<Esc>",       -- Cancel and close
   },
   
@@ -84,12 +83,12 @@ require("simple-ai-assist").setup({
   },
   
   -- Available AI actions
-  actions = {
-    { key = "e", label = "Explain", prompt = "Explain this code in detail:" },
-    { key = "r", label = "Refactor", prompt = "Suggest improvements for this code:" },
-    { key = "f", label = "Fix", prompt = "Find and fix issues in this code:" },
-    { key = "c", label = "Comment", prompt = "Add appropriate comments to this code:" },
-  }
+    actions = {
+        { key = "<C-e>", label = "Explain",  prompt = "Explain this code in detail:" },
+        { key = "<C-p>", label = "Refactor", prompt = "Suggest improvements for this code:" },
+        { key = "<C-f>", label = "Fix",      prompt = "Find and fix issues in this code:" },
+        { key = "<C-c>", label = "Comment",  prompt = "Add appropriate comments to this code:" },
+    }
 })
 ```
 
@@ -115,14 +114,14 @@ Add to your shell configuration file (`~/.bashrc`, `~/.zshrc`, etc.) to persist.
 1. Select code in visual mode (`v`, `V`, or `<C-v>`)
 2. Press `<leader>ac` (default) to trigger the assistant
 3. Choose an action:
-   - `e` - Explain the code
-   - `r` - Refactor suggestions
-   - `f` - Fix issues
-   - `c` - Add comments
+   - `C-e` - Explain the code
+   - `C-p` - Refactor suggestions
+   - `C-f` - Fix issues
+   - `C-c` - Add comments
 4. Wait for AI response
 5. Then:
-   - `a` - Accept and apply changes
-   - `r` - Retry for different response
+   - `C-u` - Accept and apply changes
+   - `C-r` - Retry for different response
    - `<Esc>` - Cancel without changes
 
 ## Local Development

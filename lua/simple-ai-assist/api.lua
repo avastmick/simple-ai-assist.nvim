@@ -14,8 +14,9 @@ function M.request_completion(prompt, code, callback)
     local messages = {
         {
             role = "system",
-            content =
-            "You are a helpful coding assistant. Provide clear, concise responses focused on the specific request. For code suggestions, provide only the improved code without explanations unless explicitly asked."
+            content = "You are a helpful coding assistant. Provide clear, concise responses " ..
+                      "focused on the specific request. For code suggestions, provide only the " ..
+                      "improved code without explanations unless explicitly asked."
         },
         {
             role = "user",

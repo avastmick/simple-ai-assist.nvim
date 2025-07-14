@@ -4,22 +4,23 @@ M.defaults = {
     api_key = vim.env.OPENROUTER_API_KEY,
     endpoint = "https://openrouter.ai/api/v1",
     model = "anthropic/claude-sonnet-4",
+    debug = false,
     keymaps = {
         trigger = "<leader>ac",
-        accept = "a",
-        retry = "r",
+        accept = "<C-u>",
+        retry = "<C-r>",
         cancel = "<Esc>",
     },
     window = {
-        width = 0.7,
-        height = 0.7,
+        width = 0.85,
+        height = 0.85,
         border = "rounded",
     },
     actions = {
-        { key = "e", label = "Explain",  prompt = "Explain this code in detail:" },
-        { key = "r", label = "Refactor", prompt = "Suggest improvements for this code:" },
-        { key = "f", label = "Fix",      prompt = "Find and fix issues in this code:" },
-        { key = "c", label = "Comment",  prompt = "Add appropriate comments to this code:" },
+        { key = "<C-e>", label = "Explain",  prompt = "Explain this code in detail:" },
+        { key = "<C-p>", label = "Refactor", prompt = "Suggest improvements for this code:" },
+        { key = "<C-f>", label = "Fix",      prompt = "Find and fix issues in this code:" },
+        { key = "<C-c>", label = "Comment",  prompt = "Add appropriate comments to this code:" },
     }
 }
 

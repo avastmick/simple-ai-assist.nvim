@@ -5,6 +5,11 @@ describe("simple-ai-assist", function()
   local simple_ai_assist
   
   before_each(function()
+    -- Mock plenary.curl before loading any modules
+    package.loaded["plenary.curl"] = {
+      post = function() end
+    }
+    
     package.loaded["simple-ai-assist"] = nil
     package.loaded["simple-ai-assist.config"] = nil
     package.loaded["simple-ai-assist.ui"] = nil
@@ -15,16 +20,28 @@ describe("simple-ai-assist", function()
         nvim_create_user_command = function() end,
         nvim_buf_get_lines = function() return {"test code"} end,
         nvim_get_current_buf = function() return 1 end,
+        nvim_feedkeys = function() end,
+        nvim_replace_termcodes = function(str) return str end,
       },
       fn = {
         mode = function() return "v" end,
         getpos = function() return {0, 1, 1, 0} end,
+        getregion = function() return {"test code"} end,
+        getreg = function() return "test code" end,
+        line = function() return 1 end,
       },
       keymap = {
         set = function() end,
       },
       notify = function() end,
       cmd = function() end,
+      schedule = function(fn) fn() end,
+      tbl_deep_extend = function(behavior, a, b)
+        local result = {}
+        for k, v in pairs(a) do result[k] = v end
+        for k, v in pairs(b or {}) do result[k] = v end
+        return result
+      end,
       env = {
         OPENROUTER_API_KEY = "test-key"
       },
@@ -73,13 +90,14 @@ describe("simple-ai-assist", function()
   end)
   
   describe("trigger_assistant", function()
-    it("should warn if not in visual mode", function()
+    it("should warn if no text selected", function()
       local notify_spy = spy.on(vim, "notify")
-      vim.fn.mode = function() return "n" end
+      vim.fn.getregion = function() return {} end
+      vim.fn.getreg = function() return "" end
       
       simple_ai_assist.trigger_assistant()
       
-      assert.spy(notify_spy).was_called_with("Please select code in visual mode first", vim.log.levels.WARN)
+      assert.spy(notify_spy).was_called_with("No code selected", vim.log.levels.WARN)
     end)
     
     it("should get selected text in visual mode", function()
