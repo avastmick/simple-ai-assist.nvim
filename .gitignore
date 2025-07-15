@@ -47,3 +47,4 @@ luac.out
 # Codegen
 CLAUDE.*
 PRD.*
+CURRENT_*
