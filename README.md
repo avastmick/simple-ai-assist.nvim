@@ -65,7 +65,7 @@ require("simple-ai-assist").setup({
   -- API configuration (defaults to OPENROUTER_API_KEY)
   api_key = vim.env.OPENROUTER_API_KEY,
   endpoint = "https://openrouter.ai/api/v1",
-  model = "anthropic/claude-3-5-sonnet-20241022",
+  model = "anthropic/claude-sonnet-4",
   
   -- Keymappings
   keymaps = {
