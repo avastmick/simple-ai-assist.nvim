@@ -24,7 +24,8 @@ M.defaults = {
   },
 }
 
-M.options = {}
+-- Initialize options to nil so we can detect if setup has been called
+M.options = nil
 
 function M.setup(opts)
   -- First merge options
