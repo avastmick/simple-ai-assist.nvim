@@ -27,8 +27,10 @@ M.defaults = {
 M.options = {}
 
 function M.setup(opts)
+  -- First merge options to check if api_key was provided
   M.options = vim.tbl_deep_extend("force", M.defaults, opts or {})
 
+  -- Only check environment and notify if no api_key was provided in opts
   if not M.options.api_key then
     if vim.env.OPENAI_API_KEY then
       M.options.api_key = vim.env.OPENAI_API_KEY

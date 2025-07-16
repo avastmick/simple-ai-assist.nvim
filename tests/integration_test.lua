@@ -125,11 +125,6 @@ local function reset_plugin_state()
   -- Clear any existing keymaps
   pcall(vim.keymap.del, "v", "<leader>ac")
   pcall(vim.keymap.del, "v", "<leader>ai")
-
-  -- Clear environment variables
-  vim.env.OPENROUTER_API_KEY = nil
-  vim.env.OPENAI_API_KEY = nil
-  vim.env.ANTHROPIC_API_KEY = nil
 end
 
 -- Run all tests
