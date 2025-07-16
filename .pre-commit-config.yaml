@@ -1,5 +1,35 @@
 repos:
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.16.1
+    rev: v8.27.2
     hooks:
       - id: gitleaks
+
+  - repo: https://github.com/JohnnyMorganz/StyLua
+    rev: v2.1.0
+    hooks:
+      - id: stylua
+        name: StyLua
+        entry: stylua
+        language: rust
+        types: [lua]
+        args: ['--color', 'always', '--']
+
+  - repo: https://github.com/lunarmodules/luacheck
+    rev: v1.2.0
+    hooks:
+      - id: luacheck
+        name: luacheck
+        entry: luacheck
+        language: lua
+        types: [lua]
+        args: ['--']
+
+  - repo: local
+    hooks:
+      - id: lua-tests
+        name: Lua Tests
+        entry: busted
+        language: system
+        files: '\.lua$'
+        pass_filenames: false
+        args: ['tests/']
