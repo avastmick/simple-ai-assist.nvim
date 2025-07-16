@@ -43,16 +43,13 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        lua-version: ["5.3", "luajit"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Lua ${{ matrix.lua-version }}
+      - name: Setup Lua
         uses: leafo/gh-actions-lua@v10
         with:
-          luaVersion: ${{ matrix.lua-version }}
+          luaVersion: "5.3"
 
       - name: Setup LuaRocks
         uses: leafo/gh-actions-luarocks@v4
@@ -64,4 +61,52 @@ jobs:
           luarocks install plenary.nvim
 
       - name: Run tests
-        run: busted tests/
+        run: busted tests/test_*.lua --exclude-tags=integration
+
+  neovim-integration:
+    name: Neovim Integration Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        neovim-version: ["v0.10.0", "nightly"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim-version }}
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.1"
+
+      - name: Setup LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+
+      - name: Install plenary.nvim
+        run: |
+          # Install plenary as a dependency
+          git clone --depth 1 https://github.com/nvim-lua/plenary.nvim.git ~/.local/share/nvim/site/pack/vendor/start/plenary.nvim
+
+      - name: Run integration tests
+        run: |
+          # Create minimal init.lua for testing
+          cat > minimal_init.lua << EOF
+          -- Add current plugin to runtimepath
+          vim.opt.runtimepath:prepend(".")
+          
+          -- Set up packpath for plenary
+          vim.opt.packpath:prepend("~/.local/share/nvim/site")
+          
+          -- Disable swapfiles for testing
+          vim.opt.swapfile = false
+          
+          -- Load the integration test
+          vim.cmd("source tests/integration_test.lua")
+          EOF
+          
+          # Run Neovim with the integration test
+          nvim --headless -u minimal_init.lua
