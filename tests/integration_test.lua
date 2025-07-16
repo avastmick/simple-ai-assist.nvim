@@ -18,6 +18,9 @@ end
 local function test_plugin_setup()
   local plugin = require("simple-ai-assist")
 
+  -- Set a dummy API key for testing
+  vim.env.OPENROUTER_API_KEY = "test-key-for-ci"
+
   -- Test setup with default options
   local ok, err = pcall(plugin.setup)
   assert(ok, "Failed to setup plugin: " .. tostring(err))
@@ -68,6 +71,9 @@ end
 local function test_config_validation()
   local plugin = require("simple-ai-assist")
 
+  -- Ensure API key is set for this test
+  vim.env.OPENROUTER_API_KEY = "test-key-for-ci"
+
   -- Test with custom configuration
   local ok, err = pcall(plugin.setup, {
     model = "custom-model",
@@ -96,6 +102,24 @@ local function test_config_validation()
   print("✓ Configuration validation works")
 end
 
+-- Helper to reset plugin state between tests
+local function reset_plugin_state()
+  -- Clear the package cache to force reload
+  package.loaded["simple-ai-assist"] = nil
+  package.loaded["simple-ai-assist.config"] = nil
+  package.loaded["simple-ai-assist.ui"] = nil
+  package.loaded["simple-ai-assist.api"] = nil
+
+  -- Clear any existing keymaps
+  pcall(vim.keymap.del, "v", "<leader>ac")
+  pcall(vim.keymap.del, "v", "<leader>ai")
+
+  -- Clear environment variables
+  vim.env.OPENROUTER_API_KEY = nil
+  vim.env.OPENAI_API_KEY = nil
+  vim.env.ANTHROPIC_API_KEY = nil
+end
+
 -- Run all tests
 local function run_tests()
   print("Running simple-ai-assist.nvim integration tests...")
@@ -112,6 +136,9 @@ local function run_tests()
   local failed = 0
 
   for _, test in ipairs(tests) do
+    -- Reset state before each test
+    reset_plugin_state()
+
     local ok, err = pcall(test)
     if ok then
       passed = passed + 1
