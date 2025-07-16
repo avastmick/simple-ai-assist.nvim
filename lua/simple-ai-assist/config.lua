@@ -1,7 +1,7 @@
 local M = {}
 
 M.defaults = {
-  api_key = vim.env.OPENROUTER_API_KEY,
+  -- api_key will be set from environment or options
   endpoint = "https://openrouter.ai/api/v1",
   model = "anthropic/claude-sonnet-4",
   debug = false,
@@ -27,12 +27,15 @@ M.defaults = {
 M.options = {}
 
 function M.setup(opts)
-  -- First merge options to check if api_key was provided
+  -- First merge options
   M.options = vim.tbl_deep_extend("force", M.defaults, opts or {})
 
-  -- Only check environment and notify if no api_key was provided in opts
+  -- Check for API key from options first, then environment
   if not M.options.api_key then
-    if vim.env.OPENAI_API_KEY then
+    -- Check environment variables
+    if vim.env.OPENROUTER_API_KEY then
+      M.options.api_key = vim.env.OPENROUTER_API_KEY
+    elseif vim.env.OPENAI_API_KEY then
       M.options.api_key = vim.env.OPENAI_API_KEY
       M.options.endpoint = "https://api.openai.com/v1"
       M.options.model = "gpt-4o"
