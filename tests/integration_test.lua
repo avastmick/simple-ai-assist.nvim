@@ -15,14 +15,28 @@ local function test_plugin_loads()
   print("✓ Plugin loads successfully")
 end
 
+local function test_plugin_without_api_key()
+  -- Test that plugin loads without errors when no API key is present
+  local plugin = require("simple-ai-assist")
+
+  -- This should not error, even without API key
+  local ok, err = pcall(plugin.setup)
+  assert(ok, "Failed to setup plugin without API key: " .. tostring(err))
+
+  -- Command should still be created
+  local commands = vim.api.nvim_get_commands({})
+  assert(commands.SimpleAIAssist ~= nil, "SimpleAIAssist command not created")
+
+  print("✓ Plugin handles missing API key gracefully")
+end
+
 local function test_plugin_setup()
   local plugin = require("simple-ai-assist")
 
-  -- Set a dummy API key for testing
-  vim.env.OPENROUTER_API_KEY = "test-key-for-ci"
-
-  -- Test setup with default options
-  local ok, err = pcall(plugin.setup)
+  -- Test setup with default options, providing API key directly
+  local ok, err = pcall(plugin.setup, {
+    api_key = "test-key-for-ci",
+  })
   assert(ok, "Failed to setup plugin: " .. tostring(err))
 
   -- Check that user command was created
@@ -71,11 +85,9 @@ end
 local function test_config_validation()
   local plugin = require("simple-ai-assist")
 
-  -- Ensure API key is set for this test
-  vim.env.OPENROUTER_API_KEY = "test-key-for-ci"
-
-  -- Test with custom configuration
+  -- Test with custom configuration, including API key
   local ok, err = pcall(plugin.setup, {
+    api_key = "test-key-for-ci",
     model = "custom-model",
     keymaps = {
       trigger = "<leader>ai",
@@ -127,6 +139,7 @@ local function run_tests()
 
   local tests = {
     test_plugin_loads,
+    test_plugin_without_api_key,
     test_plugin_setup,
     test_visual_selection,
     test_config_validation,
