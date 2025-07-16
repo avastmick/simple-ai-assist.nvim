@@ -10,14 +10,70 @@ local state = {
   context = nil,
   current_action = nil,
   response = nil,
-  original_lines = nil,  -- Store original buffer content
-  filetype = nil  -- Store the source buffer filetype
+  original_lines = nil, -- Store original buffer content
+  filetype = nil, -- Store the source buffer filetype
+  progress_timer = nil, -- Timer for progress animation
+  progress_frame = 1, -- Current frame of animation
 }
 
 local function debug_log(msg, level)
   if config.options.debug then
     vim.notify("[SimpleAI Debug] " .. msg, level or vim.log.levels.DEBUG)
   end
+end
+
+-- Using braille patterns that fill progressively
+local braille_patterns = {
+  "⡀",
+  "⡄",
+  "⡆",
+  "⡇",
+  "⣇",
+  "⣧",
+  "⣷",
+  "⣿",
+  "⣿",
+  "⣷",
+  "⣧",
+  "⣇",
+  "⡇",
+  "⡆",
+  "⡄",
+  "⡀",
+}
+
+-- Forward declaration
+local render_content
+
+local function start_progress_animation()
+  if state.progress_timer then
+    state.progress_timer:stop()
+  end
+
+  state.progress_frame = 1
+  state.progress_timer = vim.loop.new_timer()
+
+  state.progress_timer:start(
+    0,
+    100, -- Update every 100ms
+    vim.schedule_wrap(function()
+      if state.buf and vim.api.nvim_buf_is_valid(state.buf) and not state.response then
+        state.progress_frame = state.progress_frame + 1
+        if state.progress_frame > #braille_patterns then
+          state.progress_frame = 1
+        end
+        render_content()
+      end
+    end)
+  )
+end
+
+local function stop_progress_animation()
+  if state.progress_timer then
+    state.progress_timer:stop()
+    state.progress_timer = nil
+  end
+  state.progress_frame = 1
 end
 
 local function create_window()
@@ -42,7 +98,7 @@ local function create_window()
     border = opts.border,
     style = "minimal",
     title = " Simple AI Assistant ",
-    title_pos = "center"
+    title_pos = "center",
   })
 
   vim.wo[state.win].wrap = true
@@ -52,16 +108,145 @@ end
 
 local function extract_code_from_response(response_text)
   -- Extract code from markdown code blocks if present
-  local code_block = response_text:match("```%w*\n(.-)```") or
-                    response_text:match("```\n(.-)```") or
-                    response_text:match("```(.-)```")
+  local code_block = response_text:match("```%w*\n(.-)```")
+    or response_text:match("```\n(.-)```")
+    or response_text:match("```(.-)```")
   if code_block then
     return code_block:gsub("^%s+", ""):gsub("%s+$", "")
   end
   return response_text
 end
 
-local function render_content()
+-- Function to format code with line numbers
+local function format_code_with_line_numbers(code, start_line)
+  local lines = vim.split(code, "\n", { plain = true, trimempty = false })
+  local formatted_lines = {}
+
+  -- Remove trailing empty line if present
+  if code:match("\n$") and #lines > 0 and lines[#lines] == "" then
+    table.remove(lines)
+  end
+
+  local line_num = start_line or 1
+  for _, line in ipairs(lines) do
+    local formatted = string.format("%4d │ %s", line_num, line)
+    table.insert(formatted_lines, formatted)
+    line_num = line_num + 1
+  end
+
+  return formatted_lines
+end
+
+-- Function to create a unified diff view with line numbers
+local function create_diff_view(original, modified, start_line)
+  local original_lines = vim.split(original, "\n", { plain = true, trimempty = false })
+  local modified_lines = vim.split(modified, "\n", { plain = true, trimempty = false })
+  local diff_lines = {}
+  local line_num = start_line or 1
+
+  -- Handle trailing newlines
+  if original:match("\n$") and #original_lines > 0 and original_lines[#original_lines] == "" then
+    table.remove(original_lines)
+  end
+  if modified:match("\n$") and #modified_lines > 0 and modified_lines[#modified_lines] == "" then
+    table.remove(modified_lines)
+  end
+
+  -- Simple line-by-line diff (can be enhanced with actual diff algorithm later)
+  local max_lines = math.max(#original_lines, #modified_lines)
+
+  for i = 1, max_lines do
+    local orig_line = original_lines[i]
+    local mod_line = modified_lines[i]
+
+    if orig_line ~= nil and mod_line == nil then
+      -- Line was removed
+      table.insert(diff_lines, { text = string.format("%4d │ - %s", line_num, orig_line), type = "removed" })
+      line_num = line_num + 1
+    elseif orig_line == nil and mod_line ~= nil then
+      -- Line was added
+      table.insert(diff_lines, { text = string.format("%4d │ + %s", line_num, mod_line), type = "added" })
+      line_num = line_num + 1
+    elseif orig_line ~= mod_line then
+      -- Line was changed
+      table.insert(diff_lines, { text = string.format("%4d │ - %s", line_num, orig_line), type = "removed" })
+      table.insert(diff_lines, { text = string.format("%4d │ + %s", line_num, mod_line), type = "added" })
+      line_num = line_num + 1
+    else
+      -- Line unchanged
+      table.insert(diff_lines, { text = string.format("%4d │   %s", line_num, orig_line), type = "unchanged" })
+      line_num = line_num + 1
+    end
+  end
+
+  return diff_lines
+end
+
+-- Function to apply line number highlighting to code view
+local function apply_line_number_highlights(buf, start_line, end_line)
+  vim.cmd([[highlight LineNumber guifg=#7c6f64 ctermfg=243]])
+  vim.cmd([[highlight LineSeparator guifg=#504945 ctermfg=239]])
+
+  local lines = vim.api.nvim_buf_get_lines(buf, start_line - 1, end_line, false)
+
+  for i, line in ipairs(lines) do
+    local line_num = start_line + i - 1
+    local sep_pos = line:find("│")
+    if sep_pos then
+      -- Highlight line number (everything before separator)
+      vim.api.nvim_buf_add_highlight(buf, -1, "LineNumber", line_num - 1, 0, sep_pos - 1)
+      -- Highlight separator
+      vim.api.nvim_buf_add_highlight(buf, -1, "LineSeparator", line_num - 1, sep_pos - 1, sep_pos + 2)
+    end
+  end
+end
+
+-- Function to apply syntax highlighting to diff lines
+local function apply_diff_highlights(buf, start_line, end_line)
+  -- Define highlight groups to match standard diff colors
+  vim.cmd([[highlight DiffAddedLine guibg=#1c3b1a guifg=#b8bb26 ctermbg=22 ctermfg=142]])
+  vim.cmd([[highlight DiffRemovedLine guibg=#3b1a1a guifg=#fb4934 ctermbg=52 ctermfg=167]])
+  vim.cmd([[highlight DiffAddedChar guibg=#2d4a2b guifg=#b8bb26 ctermbg=28 ctermfg=142]])
+  vim.cmd([[highlight DiffRemovedChar guibg=#4a2b2b guifg=#fb4934 ctermbg=88 ctermfg=167]])
+  vim.cmd([[highlight LineNumber guifg=#7c6f64 ctermfg=243]])
+  vim.cmd([[highlight LineSeparator guifg=#504945 ctermfg=239]])
+
+  local lines = vim.api.nvim_buf_get_lines(buf, start_line - 1, end_line, false)
+
+  for i, line in ipairs(lines) do
+    local line_num = start_line + i - 1
+
+    -- Highlight line numbers and separator for all lines
+    local sep_pos = line:find("│")
+    if sep_pos then
+      -- Highlight line number (everything before separator)
+      vim.api.nvim_buf_add_highlight(buf, -1, "LineNumber", line_num - 1, 0, sep_pos - 1)
+      -- Highlight separator
+      vim.api.nvim_buf_add_highlight(buf, -1, "LineSeparator", line_num - 1, sep_pos - 1, sep_pos + 2)
+    end
+
+    -- Match lines with line numbers and +/- indicators
+    if line:match("│ %+") then
+      -- Highlight entire line with added background
+      vim.api.nvim_buf_add_highlight(buf, -1, "DiffAddedLine", line_num - 1, 0, -1)
+      -- Find where the + character is after the line number separator
+      local plus_pos = line:find("│ %+")
+      if plus_pos then
+        vim.api.nvim_buf_add_highlight(buf, -1, "DiffAddedChar", line_num - 1, plus_pos + 1, plus_pos + 2)
+      end
+    elseif line:match("│ %-") then
+      -- Highlight entire line with removed background
+      vim.api.nvim_buf_add_highlight(buf, -1, "DiffRemovedLine", line_num - 1, 0, -1)
+      -- Find where the - character is after the line number separator
+      local minus_pos = line:find("│ %-")
+      if minus_pos then
+        vim.api.nvim_buf_add_highlight(buf, -1, "DiffRemovedChar", line_num - 1, minus_pos + 1, minus_pos + 2)
+      end
+    end
+  end
+end
+
+render_content = function()
   -- Only modify the floating window buffer, never the source buffer
   if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
     return
@@ -69,29 +254,50 @@ local function render_content()
 
   vim.bo[state.buf].modifiable = true
   local lines = {}
-
-  table.insert(lines, "## Selected Code:")
-  -- Add language to code fence for syntax highlighting
-  local lang = state.filetype or ""
-  table.insert(lines, "```" .. lang)
-  for line in state.code:gmatch("[^\n]+") do
-    table.insert(lines, line)
-  end
-  table.insert(lines, "```")
-  table.insert(lines, "")
+  local diff_start_line = nil
+  local diff_end_line = nil
+  local code_start_line = nil
+  local code_end_line = nil
 
   if not state.current_action then
+    -- Show selected code with line numbers
+    table.insert(lines, "## Selected Code:")
+    local lang = state.filetype or ""
+    table.insert(lines, "```" .. lang)
+    code_start_line = #lines + 1
+    local formatted_lines =
+      format_code_with_line_numbers(state.code, state.context and state.context.display_start_line or 1)
+    for _, line in ipairs(formatted_lines) do
+      table.insert(lines, line)
+    end
+    code_end_line = #lines
+    table.insert(lines, "```")
+    table.insert(lines, "")
     table.insert(lines, "## Choose an action:")
     for _, action in ipairs(config.options.actions) do
       table.insert(lines, string.format("  %s - %s", action.key, action.label))
     end
     table.insert(lines, "")
-    table.insert(lines, "Press the key combination to select an action, or " ..
-                 config.options.keymaps.cancel .. " to cancel")
+    table.insert(
+      lines,
+      "Press the key combination to select an action, or " .. config.options.keymaps.cancel .. " to cancel"
+    )
   elseif state.response then
     -- Check if this is an explanation action
     if state.current_action and state.current_action.label == "Explain" then
-      -- For explanations, show the response directly without diff view
+      -- For explanations, show original code with line numbers at top and explanation below
+      table.insert(lines, "## Selected Code:")
+      local lang = state.filetype or ""
+      table.insert(lines, "```" .. lang)
+      code_start_line = #lines + 1
+      local formatted_lines =
+        format_code_with_line_numbers(state.code, state.context and state.context.display_start_line or 1)
+      for _, line in ipairs(formatted_lines) do
+        table.insert(lines, line)
+      end
+      code_end_line = #lines
+      table.insert(lines, "```")
+      table.insert(lines, "")
       table.insert(lines, "## Explanation:")
       table.insert(lines, "")
 
@@ -102,48 +308,88 @@ local function render_content()
 
       table.insert(lines, "")
       table.insert(lines, "---")
-      table.insert(lines, string.format("%s Retry  %s Close",
-        config.options.keymaps.retry,
-        config.options.keymaps.cancel))
+      table.insert(
+        lines,
+        string.format("%s Retry  %s Close", config.options.keymaps.retry, config.options.keymaps.cancel)
+      )
     else
-      -- For other actions (Refactor, Fix, Comment), show diff view
+      -- For other actions (Refactor, Fix, Comment), show unified diff view
       local response_text = extract_code_from_response(state.response)
 
-      table.insert(lines, "## Proposed Changes:")
-      table.insert(lines, "")
-      table.insert(lines, "### Original Code:")
-      table.insert(lines, "```" .. (state.filetype or ""))
-      for line in state.code:gmatch("[^\n]+") do
-        table.insert(lines, "- " .. line)
+      table.insert(lines, "## Code Changes:")
+      table.insert(lines, "```diff")
+      diff_start_line = #lines + 1
+
+      -- Create and add diff lines with line numbers
+      local diff_data =
+        create_diff_view(state.code, response_text, state.context and state.context.display_start_line or 1)
+      for _, diff_line in ipairs(diff_data) do
+        table.insert(lines, diff_line.text)
       end
+      diff_end_line = #lines
+
       table.insert(lines, "```")
       table.insert(lines, "")
-      table.insert(lines, "### Updated Code:")
-      table.insert(lines, "```" .. (state.filetype or ""))
-      for line in response_text:gmatch("[^\n]+") do
-        table.insert(lines, "+ " .. line)
+
+      -- Add AI explanation/notes if present in response
+      local explanation = state.response:match("```.-```(.*)$")
+      if explanation and explanation:match("%S") then
+        table.insert(lines, "## Notes:")
+        table.insert(lines, "")
+        for line in explanation:gmatch("[^\n]+") do
+          local trimmed = line:match("^%s*(.-)%s*$")
+          if trimmed ~= "" then
+            table.insert(lines, trimmed)
+          end
+        end
+        table.insert(lines, "")
       end
-      -- Handle empty lines at the end
-      if response_text:match("\n$") then
-        table.insert(lines, "+")
-      end
-      table.insert(lines, "```")
-      table.insert(lines, "")
+
       table.insert(lines, "---")
-      table.insert(lines, string.format("%s Accept  %s Retry  %s Cancel",
-        config.options.keymaps.accept,
-        config.options.keymaps.retry,
-        config.options.keymaps.cancel))
+      table.insert(
+        lines,
+        string.format(
+          "%s Accept  %s Retry  %s Cancel",
+          config.options.keymaps.accept,
+          config.options.keymaps.retry,
+          config.options.keymaps.cancel
+        )
+      )
     end
   else
     table.insert(lines, "## Processing...")
-    table.insert(lines, "Waiting for AI response...")
+    table.insert(lines, "")
+
+    -- Show animated progress indicator with block patterns
+    local frame = state.progress_frame
+
+    -- Create a nice visual with multiple block indicators
+    local blocks = string.format(
+      "%s %s %s",
+      braille_patterns[((frame - 1) % #braille_patterns) + 1],
+      braille_patterns[(frame % #braille_patterns) + 1],
+      braille_patterns[((frame + 1) % #braille_patterns) + 1]
+    )
+
+    table.insert(lines, string.format("  %s  Waiting for AI response", blocks))
+    table.insert(lines, "")
+    table.insert(lines, string.format("  Action: %s", state.current_action.label))
+    table.insert(lines, "")
+    table.insert(lines, "  Press " .. config.options.keymaps.cancel .. " to cancel")
   end
 
   vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
-  vim.bo[state.buf].modifiable = false
 
-  -- Also set the buffer to be non-modifiable at the buffer-local level
+  -- Apply line number highlighting to regular code views
+  if code_start_line and code_end_line then
+    apply_line_number_highlights(state.buf, code_start_line, code_end_line)
+  end
+
+  -- Apply diff highlighting if we rendered a diff
+  if diff_start_line and diff_end_line then
+    apply_diff_highlights(state.buf, diff_start_line, diff_end_line)
+  end
+
   vim.bo[state.buf].modifiable = false
 end
 
@@ -162,7 +408,7 @@ local function set_buffer_keymap(mode, lhs, rhs, desc)
     nowait = true,
     noremap = true,
     silent = true,
-    desc = desc
+    desc = desc,
   })
   if not ok then
     debug_log("Failed to set keymap " .. lhs .. ": " .. tostring(err), vim.log.levels.WARN)
@@ -192,8 +438,10 @@ local function setup_keymaps()
         state.current_action = action
         state.response = nil
         render_content()
+        start_progress_animation()
 
-        api.request_completion(action.prompt, state.code, function(response, error)
+        api.request_completion(action.prompt, state.code, state.filetype, function(response, error)
+          stop_progress_animation()
           if error then
             handle_api_error(error)
             return
@@ -211,80 +459,81 @@ local function setup_keymaps()
     -- Only set up accept keymap if this is not an explanation
     if state.current_action and state.current_action.label ~= "Explain" then
       set_buffer_keymap("n", config.options.keymaps.accept, function()
-      debug_log("Accept key pressed")
-      -- First check we're in the floating window
-      local current_buf = vim.api.nvim_get_current_buf()
-      if current_buf ~= state.buf then
-        vim.notify("Accept can only be called from the assistant window", vim.log.levels.WARN)
-        return
-      end
-
-      debug_log("In correct buffer, processing response")
-      if state.response and state.context then
-        local response_text = extract_code_from_response(state.response)
-
-        -- Split response into lines (preserving empty lines)
-        local lines = vim.split(response_text, "\n", { plain = true })
-
-        -- Remove trailing empty line if present
-        if #lines > 0 and lines[#lines] == "" then
-          table.remove(lines)
+        debug_log("Accept key pressed")
+        -- First check we're in the floating window
+        local current_buf = vim.api.nvim_get_current_buf()
+        if current_buf ~= state.buf then
+          vim.notify("Accept can only be called from the assistant window", vim.log.levels.WARN)
+          return
         end
 
-        -- Store the context before closing
-        local target_buf = state.context.buffer
-        local start_line = state.context.start_line
-        local end_line = state.context.end_line
+        debug_log("In correct buffer, processing response")
+        if state.response and state.context then
+          local response_text = extract_code_from_response(state.response)
 
-        debug_log(string.format("Applying changes to buffer %d, lines %d-%d",
-          target_buf, start_line, end_line))
+          -- Split response into lines (preserving empty lines)
+          local lines = vim.split(response_text, "\n", { plain = true })
 
-        -- Close the floating window first
-        M.close(false)
-
-        -- Now apply changes after window is closed
-        vim.schedule(function()
-          debug_log("Applying changes after window closed")
-          -- Ensure the source buffer is valid
-          if vim.api.nvim_buf_is_valid(target_buf) then
-            local success, err = pcall(function()
-              -- Ensure buffer is loaded
-              if not vim.api.nvim_buf_is_loaded(target_buf) then
-                vim.fn.bufload(target_buf)
-              end
-
-              -- Get buffer options
-              local buf_modifiable = vim.bo[target_buf].modifiable
-              local buf_readonly = vim.bo[target_buf].readonly
-
-              -- Check if buffer is modifiable
-              if not buf_modifiable or buf_readonly then
-                error("Buffer is not modifiable or is readonly")
-              end
-
-              -- Apply the changes to the target buffer
-              vim.api.nvim_buf_set_lines(target_buf, start_line, end_line, false, lines)
-            end)
-
-            if success then
-              vim.notify("Changes applied!", vim.log.levels.INFO)
-            else
-              vim.notify("Failed to apply changes: " .. tostring(err), vim.log.levels.ERROR)
-            end
-          else
-            vim.notify("Source buffer is no longer valid", vim.log.levels.ERROR)
+          -- Remove trailing empty line if present
+          if #lines > 0 and lines[#lines] == "" then
+            table.remove(lines)
           end
-        end)
-      end
-    end, "Accept AI suggestion")
+
+          -- Store the context before closing
+          local target_buf = state.context.buffer
+          local start_line = state.context.start_line
+          local end_line = state.context.end_line
+
+          debug_log(string.format("Applying changes to buffer %d, lines %d-%d", target_buf, start_line, end_line))
+
+          -- Close the floating window first
+          M.close(false)
+
+          -- Now apply changes after window is closed
+          vim.schedule(function()
+            debug_log("Applying changes after window closed")
+            -- Ensure the source buffer is valid
+            if vim.api.nvim_buf_is_valid(target_buf) then
+              local success, err = pcall(function()
+                -- Ensure buffer is loaded
+                if not vim.api.nvim_buf_is_loaded(target_buf) then
+                  vim.fn.bufload(target_buf)
+                end
+
+                -- Get buffer options
+                local buf_modifiable = vim.bo[target_buf].modifiable
+                local buf_readonly = vim.bo[target_buf].readonly
+
+                -- Check if buffer is modifiable
+                if not buf_modifiable or buf_readonly then
+                  error("Buffer is not modifiable or is readonly")
+                end
+
+                -- Apply the changes to the target buffer
+                vim.api.nvim_buf_set_lines(target_buf, start_line, end_line, false, lines)
+              end)
+
+              if success then
+                vim.notify("Changes applied!", vim.log.levels.INFO)
+              else
+                vim.notify("Failed to apply changes: " .. tostring(err), vim.log.levels.ERROR)
+              end
+            else
+              vim.notify("Source buffer is no longer valid", vim.log.levels.ERROR)
+            end
+          end)
+        end
+      end, "Accept AI suggestion")
     end
 
     set_buffer_keymap("n", config.options.keymaps.retry, function()
       if state.current_action then
         state.response = nil
         render_content()
+        start_progress_animation()
 
-        api.request_completion(state.current_action.prompt, state.code, function(response, error)
+        api.request_completion(state.current_action.prompt, state.code, state.filetype, function(response, error)
+          stop_progress_animation()
           if error then
             handle_api_error(error)
             return
@@ -317,12 +566,7 @@ function M.show_assistant(code, context)
 
   -- Store original buffer content to ensure we don't accidentally modify it
   if context and context.buffer and vim.api.nvim_buf_is_valid(context.buffer) then
-    state.original_lines = vim.api.nvim_buf_get_lines(
-      context.buffer,
-      context.start_line,
-      context.end_line,
-      false
-    )
+    state.original_lines = vim.api.nvim_buf_get_lines(context.buffer, context.start_line, context.end_line, false)
     -- Get the filetype of the source buffer for syntax highlighting
     state.filetype = vim.bo[context.buffer].filetype
   end
@@ -339,17 +583,13 @@ end
 
 function M.close(accepted)
   clear_keymaps()
+  stop_progress_animation()
 
   -- If not accepted and we have original lines, restore them to ensure no changes
-  if not accepted and state.original_lines and state.context and
-     vim.api.nvim_buf_is_valid(state.context.buffer) then
+  if not accepted and state.original_lines and state.context and vim.api.nvim_buf_is_valid(state.context.buffer) then
     -- Check if buffer was modified
-    local current_lines = vim.api.nvim_buf_get_lines(
-      state.context.buffer,
-      state.context.start_line,
-      state.context.end_line,
-      false
-    )
+    local current_lines =
+      vim.api.nvim_buf_get_lines(state.context.buffer, state.context.start_line, state.context.end_line, false)
 
     -- Only restore if content actually changed
     local changed = false
