@@ -258,10 +258,31 @@ render_content = function()
   local diff_end_line = nil
   local code_start_line = nil
   local code_end_line = nil
+  local header_highlights = {} -- Store header line positions and types
+
+  -- Get filename from context buffer if available
+  local filename = ""
+  if state.context and state.context.buffer and vim.api.nvim_buf_is_valid(state.context.buffer) then
+    filename = vim.api.nvim_buf_get_name(state.context.buffer)
+    -- Get relative path if it's in the current working directory
+    local cwd = vim.fn.getcwd()
+    if vim.startswith(filename, cwd) then
+      filename = vim.fn.fnamemodify(filename, ":~:.")
+    else
+      filename = vim.fn.fnamemodify(filename, ":~")
+    end
+  end
 
   if not state.current_action then
     -- Show selected code with line numbers
-    table.insert(lines, "## Selected Code:")
+    if filename ~= "" then
+      table.insert(lines, filename)
+      table.insert(header_highlights, { line = #lines, type = "filename" })
+    else
+      table.insert(lines, "Selected Code")
+      table.insert(header_highlights, { line = #lines, type = "header" })
+    end
+    table.insert(lines, "")
     local lang = state.filetype or ""
     table.insert(lines, "```" .. lang)
     code_start_line = #lines + 1
@@ -273,7 +294,9 @@ render_content = function()
     code_end_line = #lines
     table.insert(lines, "```")
     table.insert(lines, "")
-    table.insert(lines, "## Choose an action:")
+    table.insert(lines, "Actions:")
+    table.insert(header_highlights, { line = #lines, type = "header" })
+    table.insert(lines, "")
     for _, action in ipairs(config.options.actions) do
       table.insert(lines, string.format("  %s - %s", action.key, action.label))
     end
@@ -282,11 +305,19 @@ render_content = function()
       lines,
       "Press the key combination to select an action, or " .. config.options.keymaps.cancel .. " to cancel"
     )
+    table.insert(header_highlights, { line = #lines, type = "hint" })
   elseif state.response then
     -- Check if this is an explanation action
     if state.current_action and state.current_action.label == "Explain" then
       -- For explanations, show original code with line numbers at top and explanation below
-      table.insert(lines, "## Selected Code:")
+      if filename ~= "" then
+        table.insert(lines, filename)
+        table.insert(header_highlights, { line = #lines, type = "filename" })
+      else
+        table.insert(lines, "Selected Code")
+        table.insert(header_highlights, { line = #lines, type = "header" })
+      end
+      table.insert(lines, "")
       local lang = state.filetype or ""
       table.insert(lines, "```" .. lang)
       code_start_line = #lines + 1
@@ -298,7 +329,8 @@ render_content = function()
       code_end_line = #lines
       table.insert(lines, "```")
       table.insert(lines, "")
-      table.insert(lines, "## Explanation:")
+      table.insert(lines, "Explanation:")
+      table.insert(header_highlights, { line = #lines, type = "header" })
       table.insert(lines, "")
 
       -- Split response into lines and add them
@@ -307,16 +339,18 @@ render_content = function()
       end
 
       table.insert(lines, "")
-      table.insert(lines, "---")
       table.insert(
         lines,
         string.format("%s Retry  %s Close", config.options.keymaps.retry, config.options.keymaps.cancel)
       )
+      table.insert(header_highlights, { line = #lines, type = "keyhint" })
     else
       -- For other actions (Refactor, Fix, Comment), show unified diff view
       local response_text = extract_code_from_response(state.response)
 
-      table.insert(lines, "## Code Changes:")
+      table.insert(lines, "Code Changes:")
+      table.insert(header_highlights, { line = #lines, type = "header" })
+      table.insert(lines, "")
       table.insert(lines, "```diff")
       diff_start_line = #lines + 1
 
@@ -334,7 +368,8 @@ render_content = function()
       -- Add AI explanation/notes if present in response
       local explanation = state.response:match("```.-```(.*)$")
       if explanation and explanation:match("%S") then
-        table.insert(lines, "## Notes:")
+        table.insert(lines, "Notes:")
+        table.insert(header_highlights, { line = #lines, type = "header" })
         table.insert(lines, "")
         for line in explanation:gmatch("[^\n]+") do
           local trimmed = line:match("^%s*(.-)%s*$")
@@ -345,7 +380,6 @@ render_content = function()
         table.insert(lines, "")
       end
 
-      table.insert(lines, "---")
       table.insert(
         lines,
         string.format(
@@ -355,9 +389,11 @@ render_content = function()
           config.options.keymaps.cancel
         )
       )
+      table.insert(header_highlights, { line = #lines, type = "keyhint" })
     end
   else
-    table.insert(lines, "## Processing...")
+    table.insert(lines, "Processing...")
+    table.insert(header_highlights, { line = #lines, type = "processing" })
     table.insert(lines, "")
 
     -- Show animated progress indicator with block patterns
@@ -376,9 +412,32 @@ render_content = function()
     table.insert(lines, string.format("  Action: %s", state.current_action.label))
     table.insert(lines, "")
     table.insert(lines, "  Press " .. config.options.keymaps.cancel .. " to cancel")
+    table.insert(header_highlights, { line = #lines, type = "hint" })
   end
 
   vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+
+  -- Link to standard highlight groups that exist in all colorschemes
+  vim.cmd([[highlight link SimpleAIHeader Title]]) -- Usually bold and prominent
+  vim.cmd([[highlight link SimpleAIFilename Directory]]) -- Usually distinctive color
+  vim.cmd([[highlight link SimpleAIProcessing WarningMsg]]) -- Usually yellow/orange
+  vim.cmd([[highlight link SimpleAIHint Comment]]) -- Usually muted/gray
+  vim.cmd([[highlight link SimpleAIKeyHint Special]]) -- Usually distinctive
+
+  -- Apply header highlights
+  for _, highlight in ipairs(header_highlights) do
+    local hl_group = "SimpleAIHeader"
+    if highlight.type == "filename" then
+      hl_group = "SimpleAIFilename"
+    elseif highlight.type == "processing" then
+      hl_group = "SimpleAIProcessing"
+    elseif highlight.type == "hint" then
+      hl_group = "SimpleAIHint"
+    elseif highlight.type == "keyhint" then
+      hl_group = "SimpleAIKeyHint"
+    end
+    vim.api.nvim_buf_add_highlight(state.buf, -1, hl_group, highlight.line - 1, 0, -1)
+  end
 
   -- Apply line number highlighting to regular code views
   if code_start_line and code_end_line then
