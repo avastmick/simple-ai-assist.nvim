@@ -49,6 +49,9 @@ describe("simple-ai-assist.ui", function()
         nvim_buf_is_loaded = function()
           return true
         end,
+        nvim_buf_get_name = function()
+          return "/test/file.lua"
+        end,
       },
       bo = {},
       wo = {},
@@ -66,6 +69,12 @@ describe("simple-ai-assist.ui", function()
       end,
       fn = {
         bufload = function() end,
+        getcwd = function()
+          return "/test/cwd"
+        end,
+        fnamemodify = function(path, _)
+          return path
+        end,
       },
       log = {
         levels = {
@@ -89,6 +98,9 @@ describe("simple-ai-assist.ui", function()
           table.insert(result, match)
         end
         return result
+      end,
+      startswith = function(str, prefix)
+        return string.sub(str, 1, #prefix) == prefix
       end,
     }
 
