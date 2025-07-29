@@ -116,10 +116,10 @@ local function create_ask_input_window()
   local parent_row = vim.api.nvim_win_get_position(state.win)[1]
   local parent_col = vim.api.nvim_win_get_position(state.win)[2]
 
-  -- Create input window centered in the parent window
+  -- Create input window at the bottom of the parent window
   local input_width = math.floor(parent_width * 0.8)
   local input_height = 5
-  local input_row = parent_row + math.floor((parent_height - input_height) / 2)
+  local input_row = parent_row + parent_height - input_height - 2 -- Position at bottom with 2-line margin
   local input_col = parent_col + math.floor((parent_width - input_width) / 2)
 
   state.ask_buf = vim.api.nvim_create_buf(false, true)
@@ -134,7 +134,7 @@ local function create_ask_input_window()
     col = input_col,
     border = "rounded",
     style = "minimal",
-    title = " Enter your question or action ",
+    title = " Enter text ",
     title_pos = "center",
   })
 
