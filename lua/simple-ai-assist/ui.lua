@@ -14,6 +14,10 @@ local state = {
   filetype = nil, -- Store the source buffer filetype
   progress_timer = nil, -- Timer for progress animation
   progress_frame = 1, -- Current frame of animation
+  ask_mode = false, -- Track if we're in ask mode
+  ask_text = "", -- Store the user's question/action text
+  ask_buf = nil, -- Buffer for text input
+  ask_win = nil, -- Window for text input
 }
 
 local function debug_log(msg, level)
@@ -104,6 +108,80 @@ local function create_window()
   vim.wo[state.win].wrap = true
   vim.wo[state.win].linebreak = true
   vim.wo[state.win].cursorline = true
+end
+
+local function create_ask_input_window()
+  local parent_width = vim.api.nvim_win_get_width(state.win)
+  local parent_height = vim.api.nvim_win_get_height(state.win)
+  local parent_row = vim.api.nvim_win_get_position(state.win)[1]
+  local parent_col = vim.api.nvim_win_get_position(state.win)[2]
+
+  -- Create input window centered in the parent window
+  local input_width = math.floor(parent_width * 0.8)
+  local input_height = 5
+  local input_row = parent_row + math.floor((parent_height - input_height) / 2)
+  local input_col = parent_col + math.floor((parent_width - input_width) / 2)
+
+  state.ask_buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[state.ask_buf].buftype = "nofile"
+  vim.bo[state.ask_buf].modifiable = true
+
+  state.ask_win = vim.api.nvim_open_win(state.ask_buf, true, {
+    relative = "editor",
+    width = input_width,
+    height = input_height,
+    row = input_row,
+    col = input_col,
+    border = "rounded",
+    style = "minimal",
+    title = " Enter your question or action ",
+    title_pos = "center",
+  })
+
+  vim.wo[state.ask_win].wrap = true
+  vim.wo[state.ask_win].linebreak = true
+
+  -- Set initial text if any
+  if state.ask_text ~= "" then
+    local lines = vim.split(state.ask_text, "\n", { plain = true })
+    vim.api.nvim_buf_set_lines(state.ask_buf, 0, -1, false, lines)
+  end
+
+  -- Setup keymaps for the input window
+  vim.keymap.set("n", "<Return>", function()
+    M.submit_ask_prompt()
+  end, { buffer = state.ask_buf, nowait = true, noremap = true, silent = true })
+
+  vim.keymap.set("i", "<Return>", function()
+    M.submit_ask_prompt()
+  end, { buffer = state.ask_buf, nowait = true, noremap = true, silent = true })
+
+  vim.keymap.set("i", "<S-Return>", function()
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
+  end, { buffer = state.ask_buf, nowait = true, noremap = true, silent = true })
+
+  vim.keymap.set({ "n", "i" }, "<Esc>", function()
+    M.close_ask_input()
+  end, { buffer = state.ask_buf, nowait = true, noremap = true, silent = true })
+
+  -- Enter insert mode
+  vim.cmd("startinsert")
+end
+
+local function close_ask_input()
+  if state.ask_win and vim.api.nvim_win_is_valid(state.ask_win) then
+    vim.api.nvim_win_close(state.ask_win, true)
+  end
+  if state.ask_buf and vim.api.nvim_buf_is_valid(state.ask_buf) then
+    vim.api.nvim_buf_delete(state.ask_buf, { force = true })
+  end
+  state.ask_win = nil
+  state.ask_buf = nil
+
+  -- Return focus to main window
+  if state.win and vim.api.nvim_win_is_valid(state.win) then
+    vim.api.nvim_set_current_win(state.win)
+  end
 end
 
 local function extract_code_from_response(response_text)
@@ -300,6 +378,7 @@ render_content = function()
     for _, action in ipairs(config.options.actions) do
       table.insert(lines, string.format("  %s - %s", action.key, action.label))
     end
+    table.insert(lines, string.format("  %s - %s", "<C-q>", "Ask (custom prompt)"))
     table.insert(lines, "")
     table.insert(
       lines,
@@ -344,6 +423,121 @@ render_content = function()
         string.format("%s Retry  %s Close", config.options.keymaps.retry, config.options.keymaps.cancel)
       )
       table.insert(header_highlights, { line = #lines, type = "keyhint" })
+    elseif state.current_action and state.current_action.label == "Ask" then
+      -- For Ask action, determine if response contains code
+      local response_text = extract_code_from_response(state.response)
+
+      -- Check if the response is likely code by looking for common patterns
+      local is_code_response = false
+      if response_text ~= state.response then
+        -- Response had code blocks, so it's definitely code
+        is_code_response = true
+      else
+        -- Check if response looks like code (simple heuristic)
+        local code_indicators = {
+          "^%s*function",
+          "^%s*local",
+          "^%s*if%s+",
+          "^%s*for%s+",
+          "^%s*while%s+",
+          "^%s*return",
+          "^%s*class%s+",
+          "^%s*def%s+",
+          "^%s*import",
+          "^%s*const%s+",
+          "^%s*let%s+",
+          "^%s*var%s+",
+          "[%;%{%}%(%)]",
+        }
+        for _, pattern in ipairs(code_indicators) do
+          if response_text:match(pattern) then
+            is_code_response = true
+            break
+          end
+        end
+      end
+
+      if is_code_response then
+        -- Show diff view for code responses
+        table.insert(lines, "Code Changes:")
+        table.insert(header_highlights, { line = #lines, type = "header" })
+        table.insert(lines, "")
+        table.insert(lines, "```diff")
+        diff_start_line = #lines + 1
+
+        -- Create and add diff lines with line numbers
+        local diff_data =
+          create_diff_view(state.code, response_text, state.context and state.context.display_start_line or 1)
+        for _, diff_line in ipairs(diff_data) do
+          table.insert(lines, diff_line.text)
+        end
+        diff_end_line = #lines
+
+        table.insert(lines, "```")
+        table.insert(lines, "")
+
+        -- Add AI explanation/notes if present in response
+        local explanation = state.response:match("```.-```(.*)$")
+        if explanation and explanation:match("%S") then
+          table.insert(lines, "Notes:")
+          table.insert(header_highlights, { line = #lines, type = "header" })
+          table.insert(lines, "")
+          for line in explanation:gmatch("[^\n]+") do
+            local trimmed = line:match("^%s*(.-)%s*$")
+            if trimmed ~= "" then
+              table.insert(lines, trimmed)
+            end
+          end
+          table.insert(lines, "")
+        end
+
+        table.insert(
+          lines,
+          string.format(
+            "%s Accept  %s Retry  %s Cancel",
+            config.options.keymaps.accept,
+            config.options.keymaps.retry,
+            config.options.keymaps.cancel
+          )
+        )
+        table.insert(header_highlights, { line = #lines, type = "keyhint" })
+      else
+        -- Show as plain text response (like Explain)
+        if filename ~= "" then
+          table.insert(lines, filename)
+          table.insert(header_highlights, { line = #lines, type = "filename" })
+        else
+          table.insert(lines, "Selected Code")
+          table.insert(header_highlights, { line = #lines, type = "header" })
+        end
+        table.insert(lines, "")
+        local lang = state.filetype or ""
+        table.insert(lines, "```" .. lang)
+        code_start_line = #lines + 1
+        local formatted_lines =
+          format_code_with_line_numbers(state.code, state.context and state.context.display_start_line or 1)
+        for _, line in ipairs(formatted_lines) do
+          table.insert(lines, line)
+        end
+        code_end_line = #lines
+        table.insert(lines, "```")
+        table.insert(lines, "")
+        table.insert(lines, "Response:")
+        table.insert(header_highlights, { line = #lines, type = "header" })
+        table.insert(lines, "")
+
+        -- Split response into lines and add them
+        for line in state.response:gmatch("[^\n]+") do
+          table.insert(lines, line)
+        end
+
+        table.insert(lines, "")
+        table.insert(
+          lines,
+          string.format("%s Retry  %s Close", config.options.keymaps.retry, config.options.keymaps.cancel)
+        )
+        table.insert(header_highlights, { line = #lines, type = "keyhint" })
+      end
     else
       -- For other actions (Refactor, Fix, Comment), show unified diff view
       local response_text = extract_code_from_response(state.response)
@@ -514,8 +708,14 @@ local function setup_keymaps()
         end)
       end, "Select " .. action.label .. " action")
     end
+
+    -- Add the Ask action keymap
+    set_buffer_keymap("n", "<C-q>", function()
+      state.ask_mode = true
+      create_ask_input_window()
+    end, "Ask (custom prompt)")
   else
-    -- Only set up accept keymap if this is not an explanation
+    -- Only set up accept keymap if this is not an explanation action
     if state.current_action and state.current_action.label ~= "Explain" then
       set_buffer_keymap("n", config.options.keymaps.accept, function()
         debug_log("Accept key pressed")
@@ -640,6 +840,59 @@ function M.show_assistant(code, context)
   end
 end
 
+function M.submit_ask_prompt()
+  if not state.ask_buf or not vim.api.nvim_buf_is_valid(state.ask_buf) then
+    return
+  end
+
+  -- Get the text from the input buffer
+  local lines = vim.api.nvim_buf_get_lines(state.ask_buf, 0, -1, false)
+  state.ask_text = table.concat(lines, "\n")
+
+  -- Close the input window
+  close_ask_input()
+
+  -- Create the ask action
+  state.current_action = {
+    label = "Ask",
+    prompt = state.ask_text,
+  }
+
+  -- Clear the ask text and reset ask mode
+  state.ask_mode = false
+  state.response = nil
+  render_content()
+  start_progress_animation()
+
+  -- Make the API request with the custom prompt
+  api.request_completion(state.ask_text, state.code, state.filetype, function(response, error)
+    stop_progress_animation()
+    if error then
+      handle_api_error(error)
+      return
+    end
+
+    state.response = response
+    render_content()
+    -- Clear and re-setup keymaps for the new state
+    clear_keymaps()
+    setup_keymaps()
+
+    -- Ensure we're in normal mode after rendering
+    if state.win and vim.api.nvim_win_is_valid(state.win) then
+      vim.api.nvim_win_call(state.win, function()
+        vim.cmd("stopinsert")
+      end)
+    end
+  end)
+end
+
+function M.close_ask_input()
+  close_ask_input()
+  state.ask_mode = false
+  state.ask_text = ""
+end
+
 function M.close(accepted)
   clear_keymaps()
   stop_progress_animation()
@@ -691,6 +944,18 @@ function M.close(accepted)
   state.response = nil
   state.original_lines = nil
   state.filetype = nil
+  state.ask_mode = false
+  state.ask_text = ""
+
+  -- Clean up ask input window if it exists
+  if state.ask_win and vim.api.nvim_win_is_valid(state.ask_win) then
+    vim.api.nvim_win_close(state.ask_win, true)
+  end
+  if state.ask_buf and vim.api.nvim_buf_is_valid(state.ask_buf) then
+    vim.api.nvim_buf_delete(state.ask_buf, { force = true })
+  end
+  state.ask_win = nil
+  state.ask_buf = nil
 end
 
 return M
