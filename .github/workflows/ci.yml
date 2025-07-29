@@ -56,9 +56,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          luarocks install busted
+          # Install busted dependencies manually to avoid lua-term issue
+          luarocks install lua_cliargs
+          luarocks install luasystem
+          luarocks install dkjson
+          luarocks install say
           luarocks install luassert
-          luarocks install plenary.nvim
+          luarocks install penlight
+          luarocks install mediator_lua
+          # Install busted without lua-term
+          luarocks install busted --deps-mode=none
+          # plenary.nvim is not available on luarocks
 
       - name: Run tests
         run: busted tests/test_*.lua --exclude-tags=integration
